@@ -13,7 +13,6 @@
 #include <stdbool.h>
 #include "tm4c123gh6pm.h"
 
-
 #define MAX_CHARS       80
 #define MAX_FIELDS      5
 #define MAX_DIG_U32     10
@@ -21,7 +20,6 @@
 #define DELIMETER       0
 #define ALPHA           1
 #define NUMERIC         2
-
 
 #define GOTO_HOME    "\x1B[H"
 #define CLEAR_SCREEN "\x1B[2J"
@@ -33,8 +31,6 @@
 #define SAVE_POS     "\x1B[s"
 #define RETURN_2_POS "\x1B[u"
 
-
-
 typedef struct _USER_DATA
 {
     char    buff[MAX_CHARS+1];
@@ -43,7 +39,7 @@ typedef struct _USER_DATA
     char    fieldType[MAX_FIELDS];
 }USER_DATA;
 
-void initShell(uint32_t baudRate, uint32_t fcyc);
+void initScreen(void);
 void getsUart0(USER_DATA* data);
 void parseFields(USER_DATA* data);
 char* getFieldString(USER_DATA* data, uint8_t fieldNumber);
@@ -59,5 +55,6 @@ int32_t atoi32(const char* str);
 void itoa32(int32_t num, char *str);
 void htoa(uint32_t num, char str[MAX_DIG_U32]);
 void clearString(char* string, uint32_t len);
+void newline(void);
 
 #endif /* SHELL_H_ */

@@ -54,8 +54,7 @@ extern uint32_t __STACK_TOP;
 // External declarations for the interrupt handlers used by the application.
 //
 //*****************************************************************************
-
-void displayIsr(void);
+// To be added by user
 
 //*****************************************************************************
 //
@@ -179,7 +178,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Timer 5 subtimer A
     IntDefaultHandler,                      // Timer 5 subtimer B
     IntDefaultHandler,                      // Wide Timer 0 subtimer A
-    displayIsr,                             // Wide Timer 0 subtimer B
+    IntDefaultHandler,                      // Wide Timer 0 subtimer B
     IntDefaultHandler,                      // Wide Timer 1 subtimer A
     IntDefaultHandler,                      // Wide Timer 1 subtimer B
     IntDefaultHandler,                      // Wide Timer 2 subtimer A

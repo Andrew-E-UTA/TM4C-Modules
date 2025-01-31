@@ -1,26 +1,23 @@
-/*
- * shell.c
- *
- *  Created on: Sep 6, 2024
- *      Author: kyojin
- */
-
 //-----------------------------------------------------------------------------
 // Device includes
 //-----------------------------------------------------------------------------
+
+
+/* Pre-Processor Defines and Macros */
 
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "tm4c123gh6pm.h"
-#include "clock.h"
 #include "uart0.h"
 #include "shell.h"
 
-void initShell(uint32_t baudRate, uint32_t fcyc)
+/* Subroutines */
+
+void initScreen(void)
 {
-    initUart0();
-    setUart0BaudRate(baudRate, fcyc);
+    putsUart0(CLEAR_SCREEN);
+    putsUart0(GOTO_HOME);
 }
 
 void getsUart0(USER_DATA* data)
@@ -117,10 +114,12 @@ float getFieldFloat(USER_DATA* data, uint8_t fieldNumber){
 bool isCommand(USER_DATA* data, const char strCommand[], uint8_t minArguments)
 {
     char* Command = &(data->buff[data->fieldPos[0]]);
+
     bool match = strcmp(Command, strCommand);
+
     if(!match) return false;
-    if(data->fieldCount-1 == minArguments) return true;
-    else return false;
+    if(data->fieldCount-1 < minArguments) return false;
+    return true;
 }
 
 void strcpy(char* to, const char* from)
@@ -266,4 +265,9 @@ void htoa(uint32_t num, char str[MAX_DIG_U32])
 void clearString(char* string, uint32_t len){
     uint32_t i;
     for(i = 0; i < len; i++) string[i] = 0;
+}
+
+void newline(void)
+{
+    putcUart0('\n');
 }

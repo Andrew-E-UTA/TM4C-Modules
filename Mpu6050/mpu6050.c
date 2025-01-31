@@ -25,11 +25,11 @@ void initMpu6050(uint8_t addr)
     //SampleRate Divider
     //gyroscope  rate = 8k for dlpf off and 1k for dlpf on
     //Sampling Rate = 8e3 / (1 + SMPLRT_DIV) = 2 kHz
-    writeI2c0Register(addr, SMPLRT_DIV, 0x03);
+    writeI2c0Register(addr, SMPLRT_DIV, 0x01);
 
     // CLKSEL = 1
     // Recommended by datasheet to use one of the gyroscope reference sources for improved stability
-    writeI2c0Register(addr, PWR_MGMT_1, 0x0A);
+    writeI2c0Register(addr, PWR_MGMT_1, 0x0B);
 
     //External Frame Sync
     //Digital Low Pass Filter
@@ -55,7 +55,6 @@ void getMpuData(MpuData *data, MpuData *offset)
     //Byte array
     uint8_t buffer[14] = {};
     int16_t accX, accY, accZ, gyrX, gyrY, gyrZ;
-    int16_t temp;
     //Read 14 bytes starting at accelerometer xout high
     //Accelerometer xyz H/L (6 bytes)
     //Temp H/L (2 bytes)
@@ -65,8 +64,6 @@ void getMpuData(MpuData *data, MpuData *offset)
     accX = (buffer[0] << 8)  | buffer[1];
     accY = (buffer[2] << 8)  | buffer[3];
     accZ = (buffer[4] << 8)  | buffer[5];
-
-    temp = (buffer[6] << 8)  | buffer[7];
 
     gyrX = (buffer[8] << 8)  | buffer[9];
     gyrY = (buffer[10] << 8) | buffer[11];
@@ -88,9 +85,6 @@ void getMpuData(MpuData *data, MpuData *offset)
         data->gyro.y -= offset->gyro.y;
         data->gyro.z -= offset->gyro.z;
     }
-
-    data->temp.c =  ((double)temp / 340.0f) + 36.53f;
-
 }
 
 void calculateOffset(MpuData *offset)
@@ -119,24 +113,21 @@ void calculateOffset(MpuData *offset)
     offset->gyro.z = cumulate.gyro.z / AVERAGE_COUNT;
 }
 
-void getAccelPos(const MpuData *data, Pos3d *accelPos)
+void getAccelPos(const MpuData *data, Vec3 *accelPos)
 {
-    accelPos->pitch = atan((data->accel.y) / (sqrt(data->accel.x * data->accel.x + data->accel.z * data->accel.z))) * RAD_2_DEG;
-    accelPos->roll = atan((-1 * data->accel.x) / (sqrt(data->accel.y * data->accel.y + data->accel.z * data->accel.z))) * RAD_2_DEG;
-    accelPos->yaw = 0;
+//    accelPos->pitch = atan((data->accel.y) / (sqrt(data->accel.x * data->accel.x + data->accel.z * data->accel.z))) * RAD_2_DEG;
+//    accelPos->roll = atan((-1 * data->accel.x) / (sqrt(data->accel.y * data->accel.y + data->accel.z * data->accel.z))) * RAD_2_DEG;
+    accelPos->x = atan((data->accel.y) /  data->accel.z) * RAD_2_DEG;
+    accelPos->y = atan((data->accel.x) / data->accel.z) * RAD_2_DEG;
+    accelPos->z = 0;
 }
 
-void getGyroPos(const MpuData *data, Pos3d *gyroPos, double dt)
+void getGyroPos(const MpuData *data, Vec3 *gyroPos, double dt)
 {
     //gyroPos stores the previous angle for pitch roll and yaw
     //dt is the time in seconds between measurements
 
-    //PitchAngle += PitchRate * dt
-    gyroPos->pitch  += data->gyro.x * dt;
-
-    //RollAngle += RollRate * dt
-    gyroPos->roll   += data->gyro.y * dt;
-
-    //YawAngle += YawRate * dt
-    gyroPos->yaw    += data->gyro.z * dt;
+    gyroPos->x  += (data->gyro.x * dt);
+    gyroPos->y   += (data->gyro.y * dt);
+    gyroPos->z    += data->gyro.z * dt;
 }

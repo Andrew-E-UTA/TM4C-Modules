@@ -55,7 +55,7 @@ extern uint32_t __STACK_TOP;
 //
 //*****************************************************************************
 
-void displayIsr(void);
+extern void irqIsr(void);
 
 //*****************************************************************************
 //
@@ -88,7 +88,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C
     IntDefaultHandler,                      // GPIO Port D
-    IntDefaultHandler,                      // GPIO Port E
+    irqIsr,                                 // GPIO Port E
     IntDefaultHandler,                      // UART0 Rx and Tx
     IntDefaultHandler,                      // UART1 Rx and Tx
     IntDefaultHandler,                      // SSI0 Rx and Tx
@@ -179,7 +179,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Timer 5 subtimer A
     IntDefaultHandler,                      // Timer 5 subtimer B
     IntDefaultHandler,                      // Wide Timer 0 subtimer A
-    displayIsr,                             // Wide Timer 0 subtimer B
+    IntDefaultHandler,                      // Wide Timer 0 subtimer B
     IntDefaultHandler,                      // Wide Timer 1 subtimer A
     IntDefaultHandler,                      // Wide Timer 1 subtimer B
     IntDefaultHandler,                      // Wide Timer 2 subtimer A

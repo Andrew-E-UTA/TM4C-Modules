@@ -135,41 +135,18 @@
 /* User Types */
 
 
-typedef struct _accel
+typedef struct _vec3
 {
-    float x;
-    float y;
-    float z;
-}Accel;
-
-typedef struct _gyro
-{
-    float x;
-    float y;
-    float z;
-}Gyro;
-
-typedef struct _temp
-{
-    float c;
-    float f;
-    float k;
-}Temp;
+    double x;
+    double y;
+    double z;
+}Vec3;
 
 typedef struct _mpu_data
 {
-    Accel accel;
-    Gyro gyro;
-    Temp temp;
+    Vec3 accel;
+    Vec3 gyro;
 }MpuData;
-
-typedef struct _pos_3d
-{
-    double pitch;
-    double yaw;
-    double roll;
-}Pos3d;
-
 
 /* Function Prototypes */
 
@@ -185,9 +162,9 @@ void calculateOffset(MpuData *offset);
 void getMpuData(MpuData *data, MpuData *offset);
 
 //uses acceleromter values to get pitch and roll
-void getAccelPos(const MpuData *data, Pos3d *accelPos);
+void getAccelPos(const MpuData *data, Vec3 *accelPos);
 
 //uses the gyro to get pitch and roll
-void getGyroPos(const MpuData *data, Pos3d *gyroPos, double dt);
+void getGyroPos(const MpuData *data, Vec3 *gyroPos, double dt);
 
 #endif

@@ -22,7 +22,6 @@
 #define ALPHA           1
 #define NUMERIC         2
 
-
 #define GOTO_HOME    "\x1B[H"
 #define CLEAR_SCREEN "\x1B[2J"
 #define CLEAR_LINE   "\x1B[0K"
@@ -56,7 +55,7 @@ void strcpyFill(char* to, const char* from, uint8_t len, char letter);
 uint32_t strlen(const char *str);
 bool strcmp(const char* s1, const char* s2);
 int32_t atoi32(const char* str);
-void itoa32(int32_t num, char *str);
+void itoa32(int32_t num, char str[MAX_DIG_U32]);
 void htoa(uint32_t num, char str[MAX_DIG_U32]);
 void clearString(char* string, uint32_t len);
 
