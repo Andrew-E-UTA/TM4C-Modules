@@ -1,1 +1,26 @@
 /.metadata/
+#Common 
+*.o
+*.obj
+*.zip
+*.xml
+*.e
+*.exe
+**/debug/
+
+#CCS Related
+*.project 
+*.cproject
+*.ccsproject
+*.pcap
+*.pcapng
+**/targetConfigs/
+**/.jxbrowser.userdata/
+**/.settings/
+**/.launches/
+**/Debug/
+**/RemoteSystemsTempFiles/
+
+#Python RelatedA
+**/.*_venv/
+**/.__pycache__/
