@@ -110,14 +110,17 @@
 
 
 /* STRUCTS ENUMS & TYPES*/
+typedef union {uint32_t w; struct{uint16_t h,l;}; } h_w;
+
 typedef struct { uint16_t x,y,z; } u16Vec3;
-typedef struct { uint32_t x,y,z; } u32Vec3;
+typedef struct { h_w x,y,z; } u32Vec3;
 
 /* SUB ROUTINE PROTOTYPES */
 
 void hmc_init(void);
+void hmc_req_read(void);
 u16Vec3 hmc_read(void);
-u32Vec3 hmc_correct(const u16Vec3* raws);
+u32Vec3 hmc_correct(const u16Vec3 raws);
 
 
 #endif /* HMC58883L_H_ */
@@ -125,8 +128,16 @@ u32Vec3 hmc_correct(const u16Vec3* raws);
 #include "i2c1.h"
 
 void hmc_init(void) {
+    //hw avg 8 with 15 hz sample rate
     writeI2c1Register(HMC5883_ADDR, HMC5883_CONFIG_A_R, HMC5883_CONFIG_A_AVG_8 | HMC5883_CONFIG_A_DO_15);
+    //4.7 gain
     writeI2c1Register(HMC5883_ADDR, HMC5883_CONFIG_B_R, HMC5883_CONFIG_B_GAIN_4P7);
+    //continuous mode
+    writeI2c1Register(HMC5883_ADDR, HMC5883_MODE_R, 0x00);
+}
+
+void hmc_req_read(void) {
+    writeI2c1Register(HMC5883_ADDR, HMC5883_MODE_R, HMC5883_MODE_MODE_SINGLE);
 }
 
 u16Vec3 hmc_read(void) {
@@ -142,11 +153,11 @@ u16Vec3 hmc_read(void) {
 
 //Returns the values in units of Gauss in Q16 format
 #define HMC_CONVERT(r, c) (((uint32_t)(r)<<16)/(c))
-u32Vec3 hmc_correct(const u16Vec3* raws) {
+u32Vec3 hmc_correct(const u16Vec3 raws) {
     u32Vec3 corrected;
-    corrected.x = HMC_CONVERT(raws->x,GAIN_4P7_CONV);
-    corrected.y = HMC_CONVERT(raws->y,GAIN_4P7_CONV);
-    corrected.z = HMC_CONVERT(raws->z,GAIN_4P7_CONV);
+    corrected.x.w = HMC_CONVERT(raws.x,GAIN_4P7_CONV);
+    corrected.y.w = HMC_CONVERT(raws.y,GAIN_4P7_CONV);
+    corrected.z.w = HMC_CONVERT(raws.z,GAIN_4P7_CONV);
     return corrected;
 }
 #endif

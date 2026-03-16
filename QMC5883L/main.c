@@ -20,71 +20,62 @@
 //Higher Level Peripheral Access
 #define SHELL_IMPLEMENTATION
 #include "shell.h"
-#define HMC5883L_IMPLEMENTATION
-#include "HMC58883L.h"
+#define QMC5883L_IMPLEMENTATION
+#include "QMC5883L.h"
 
 
 /* GLOBALS CONSTS AND MACROS */
 #define LED_G           PORTF,3
-#define HMC_IRQ         PORTB,5
+#define QMC_IRQ         PORTB,5
 
 bool data_ready = false;
 
 /* SUB ROUTINE PROTOTYPES */
 
 void initHw(void);
-void hmcIsr(void);
-
-void i2c_scan(void) {
-    char buf[32];
-    putsUart0("Scanning I2C addresses...");
-    uint8_t addr;
-    for(addr = 0x08; addr < 0x78; addr++) {
-        if (pollI2c1Address(addr)) {
-            usprintf(buf, "Found device at %d\n", addr);
-            putsUart0(buf);
-        }
-    }
-    putsUart0("Scan done.");
-}
+void qmcIsr(void);
 
 /* MAIN ROUTINE */
 int main(void) {
     initHw();
 
     char buffer[100];
-    u32Vec3 raw_gauss;
+    i16Vec3 raws;
 
-    uint8_t addrs[] = {0,1,2,9,10,11,12};
-    uint8_t i;
-    for(i = 0; i < 7;++i) {
-        uint8_t d = readI2c1Register(HMC5883_ADDR, i);
-        usprintf(buffer, "Reading{%d}: %d\n", i, d);
+    uint8_t addrs[] = {6, 9, 10, 13};
+    uint8_t i = 0;
+    for(;i < 4; ++i) {
+        usprintf(buffer, "Reg[%x]: %x\n", addrs[i], readI2c1Register(QMC5883_ADDR, addrs[i]));
         putsUart0(buffer);
     }
 
+
     for(;;) {
-        Ran every Cycle
+        //Ran every Cycle
+
+
         if(!data_ready) continue;
         data_ready = false;
+        readI2c1Register(QMC5883_ADDR, QMC5883_STAT_R);
+        togglePinValue(LED_G);
         //Ran When data ready
-        raw_gauss = hmc_correct(hmc_read());
-
         putsUart0(SAVE_POS);
-        usprintf(buffer, "mx: %d.%d\n", raw_gauss.x.h, raw_gauss.x.l);
-        Print(buffer);
-        usprintf(buffer, "my: %d.%d\n", raw_gauss.y.h, raw_gauss.y.l);
-        Print(buffer);
-        usprintf(buffer, "mz: %d.%d\n", raw_gauss.z.h, raw_gauss.z.l);
-        Print(buffer);
+        raws = qmc_read();
+        usprintf(buffer, "x: %d\n", raws.x);
+        putsUart0(buffer);
+        usprintf(buffer, "y: %d\n", raws.y);
+        putsUart0(buffer);
+        usprintf(buffer, "z: %d\n", raws.z);
+        putsUart0(buffer);
+
         putsUart0(RETURN_2_POS);
         waitMicrosecond(100e3);
     }
 }
 
-void hmcIsr(void) {
+void qmcIsr(void) {
     data_ready = true;
-    clearPinInterrupt(HMC_IRQ);
+    clearPinInterrupt(QMC_IRQ);
 }
 
 void initHw(void) {
@@ -95,9 +86,9 @@ void initHw(void) {
     selectPinPushPullOutput(LED_G);
 
     enablePort(PORTB);
-    selectPinDigitalInput(HMC_IRQ);
-    selectPinInterruptRisingEdge(HMC_IRQ);
-    enablePinInterrupt(HMC_IRQ);
+    selectPinDigitalInput(QMC_IRQ);
+    selectPinInterruptRisingEdge(QMC_IRQ);
+    enablePinInterrupt(QMC_IRQ);
     enableNvicInterrupt(INT_GPIOB);
 
     //Shell
@@ -107,12 +98,11 @@ void initHw(void) {
     //Magnetometer
     initI2c1();
 
-    if(!pollI2c1Address(HMC5883_ADDR)) {
+    if(!pollI2c1Address(QMC5883_ADDR)) {
         Print("[Error]: Magno not detected...", .fg=Red);
         for(;;);
     }
-
-//    hmc_init();
+    qmc_init();
 
     //Startup Sequence
     putsUart0(CLEAR_SCREEN);
@@ -122,6 +112,5 @@ void initHw(void) {
     setPinValue(LED_G, 1);
     waitMicrosecond(500e3);
     setPinValue(LED_G, 0);
-//    i2c_scan();
 }
 
