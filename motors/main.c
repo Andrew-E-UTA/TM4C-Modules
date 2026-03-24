@@ -55,6 +55,7 @@ int main(void)
         convert(raws, pwms);
         setPwms(pwms[0], 0,0);
         waitMicrosecond(100e3);
+    }
 }
 
 void initHw(void) {

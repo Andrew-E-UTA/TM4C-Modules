@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <math.h>
 
 //TM4C-Core
 #include "tm4c123gh6pm.h"
@@ -19,13 +20,11 @@
 
 //TM4C-Peripheral drivers
 #include "gpio.h"
-#include "i2c0.h"
+#include "i2c1.h"
 #include "uart0.h"
 
 //Higher Level Peripheral Access
-#define SHELL_IMPLEMENTATION
 #include "shell.h"
-#define MPU6050_IMPLEMENTATION
 #include "mpu6050.h"
 
 /* GLOBALS CONSTS AND MACROS */
@@ -33,53 +32,38 @@
 #define LED_G           PORTF,3
 #define MPU6050_INT     PORTB,0
 
-typedef struct { float x, y, z; } Vec3f;
-
-Vec3 gyroOffset;
-Vec3 a_l;
-Vec3 a_h;
-//AccelCalibrations accelCal;
 
 /* SUB ROUTINE PROTOTYPES */
 
-#define uprintf(s, ...) \
-    do {\
-    char buffer[100];\
-    snprintf(buffer, sizeof(buffer), s, __VA_ARGS__);\
-    putsUart0(buffer);\
-    putcUart0('\n');\
-    } while(0);
-
 void initHw(void);
-
-void calibrate();
+void printData(MpuData m);
+void printVec(Vec3f v);
+float deltaSeconds(void);
+Vec3f complimentaryFilter(MpuData m, float dt_s);
+Vec3f gyroOffsets(void);
 
 /* MAIN ROUTINE */
 int main(void) {
     initHw();
+    Vec3f g_ofs = gyroOffsets();
 
-    calibrate();
-
-    float ax, ay, az;
-    float gx, gy, gz;
+    MpuData m;
     for(;;) {
         putsUart0(SAVE_POS);
-        ax = mpu_convert(mpu_accel.x);
-        ay = mpu_convert(mpu_accel.y);
-        az = mpu_convert(mpu_accel.z);
-        uprintf("ax: %10g", ax);
-        uprintf("ay: %10g", ay);
-        uprintf("az: %10g", az);
 
-        gx = mpu_convert(mpu_gyro.x - gyroOffset.x);
-        gy = mpu_convert(mpu_gyro.y - gyroOffset.y);
-        gz = mpu_convert(mpu_gyro.z - gyroOffset.z);
-        uprintf("gx: %10g", gx);
-        uprintf("gy: %10g", gy);
-        uprintf("gz: %10g", gz);
+        m = mpu_read();
+        //Correct gyro
+        m.g.x -= g_ofs.x;
+        m.g.y -= g_ofs.y;
+        m.g.z -= g_ofs.z;
+
+        printData(m);
+        putsUart0("-----------------------------------------\n");
+
+        printVec(complimentaryFilter(m, deltaSeconds()));
 
         putsUart0(RETURN_2_POS);
-        waitMicrosecond(100e3);
+        waitMicrosecond(1e3);
     }
 }
 
@@ -98,7 +82,7 @@ void initHw(void) {
     setUart0BaudRate(115200, 40e6);
 
     //Sensor
-    initI2c0();
+    initI2c1();
     mpu_init();
 
     //Startup Sequence
@@ -109,57 +93,76 @@ void initHw(void) {
     waitMicrosecond(500e3);
     setPinValue(LED_G, 0);
 
+    //Stopwatch
+    SYSCTL_RCGCWTIMER_R |= SYSCTL_RCGCWTIMER_R0;
+    _delay_cycles(3);
+
+    WTIMER0_CTL_R  &= ~(TIMER_CTL_TAEN);
+    WTIMER0_CFG_R   = 0x4;
+    WTIMER0_TAMR_R  = TIMER_TAMR_TAMR_1_SHOT | TIMER_TAMR_TACDIR;
+    WTIMER0_TAV_R   = 0;
+    WTIMER0_CTL_R  |= TIMER_CTL_TAEN;
+
     //Interrupt Line
-    enablePort(PORTB);
-    selectPinDigitalInput(MPU6050_INT);
-
-
-    selectPinInterruptHighLevel(MPU6050_INT);
-    enablePinInterrupt(MPU6050_INT);
-    enableNvicInterrupt(INT_GPIOB);
+//    enablePort(PORTB);
+//    selectPinDigitalInput(MPU6050_INT);
+//    selectPinInterruptHighLevel(MPU6050_INT);
+//    enablePinInterrupt(MPU6050_INT);
+//    enableNvicInterrupt(INT_GPIOB);
 }
 
-void calibrate() {
-    disablePinInterrupt(MPU6050_INT);
-    uprintf("Calibrating Gyroscopes%c", ' ');
-    uprintf("<Enter> To Calibrate Gyro\nLeave Resting%c",' ');
-    while(1) {
-        char c = getcUart0();
-        if(13 == c || 10 == c) break;
+float deltaSeconds(void) {
+    uint32_t counts = WTIMER0_TAV_R;
+    WTIMER0_TAV_R = 0;
+    return ((float)counts) * .000000025;
+}
+
+void printData(MpuData m) {
+    char buffer[100];
+    usprintf(buffer, "Ax:%10f|Ay:%10f|Az:%10f|\n", m.a.x, m.a.y,m.a.z);
+    putsUart0(buffer);
+    usprintf(buffer, "Gx:%10f|Gy:%10f|Gz:%10f|\n", m.g.x, m.g.y,m.g.z);
+    putsUart0(buffer);
+}
+
+void printVec(Vec3f v) {
+    char buffer[100];
+    usprintf(buffer, "X:%10f|Y:%10f|Z:%10f|\n", v.x, v.y, v.z);
+    putsUart0(buffer);
+}
+
+#define C_ALPHA   0.8
+Vec3f complimentaryFilter(MpuData m, float dt_s) {
+    static Vec3f gyro_est = {0, 0, 0};
+    Vec3f accel_est = {0 ,0, 0};
+    //integrate Gyro
+    gyro_est.x += m.g.x * dt_s;
+    gyro_est.y += m.g.y * dt_s;
+    gyro_est.z += m.g.z * dt_s;
+    //Euler Angle from Accel
+    accel_est.x = atan2f(m.a.y, sqrtf(m.a.x*m.a.x + m.a.z*m.a.z));
+    accel_est.y = atan2f(m.a.x, sqrtf(m.a.y*m.a.y + m.a.z*m.a.z));
+    accel_est.z = atan2f(sqrtf(m.a.x*m.a.x + m.a.y*m.a.y), m.a.z);
+    return (Vec3f){
+        .x= (C_ALPHA)*gyro_est.x + (1-C_ALPHA)*accel_est.x,
+        .y= (C_ALPHA)*gyro_est.y + (1-C_ALPHA)*accel_est.y,
+        .z= (C_ALPHA)*gyro_est.z + (1-C_ALPHA)*accel_est.z
+    };
+}
+
+Vec3f gyroOffsets(void) {
+    uint32_t i;
+    MpuData m;
+    Vec3f s = {0,0,0};
+    for(i = 0; i < 1000; ++i) {
+        m = mpu_read();
+        s.x += m.g.x;
+        s.y += m.g.y;
+        s.z += m.g.z;
     }
-    mpu_read_avg_gyro(&gyroOffset);
-    enablePinInterrupt(MPU6050_INT);
-    //    size_t i = 0;
-    //    char* labels[] = {"+Z", "-Z", "+Y", "-Y", "+X", "-X"};
-    //    char* desc[] = {"Leave Resting", "Upside Down", "Nose Up", "Nose Down", "Right Up", "Left Up"};
-    //
-    //    uprintf("Calibrating %s", "Accelerometer")
-    //    for(;i < 6; ++i) {
-    //        Vec3 tmp;
-    //        uprintf("<Enter> To Calibrate %s", labels[i]);
-    //        uprintf("%s", desc[i]);
-    //        while(1) {
-    //            char c = getcUart0();
-    //            if(13 == c || 10 == c) break;
-    //        }
-    //        mpu_read_avg_acc(&tmp);
-    //        switch (i) {
-    //        case 0: a_h.z = tmp.z; break;
-    //        case 1: a_l.z = tmp.z; break;
-    //        case 2: a_h.y = tmp.y; break;
-    //        case 3: a_l.y = tmp.y; break;
-    //        case 4: a_h.x = tmp.x; break;
-    //        case 5: a_l.x = tmp.x; break;
-    //        }
-    //    }
-    //    mpu_calibrate(&a_l, &a_h, &accelCal);
+    s.x /= 1000;
+    s.y /= 1000;
+    s.z /= 1000;
+    return s;
 }
 
-void risingEdgeIsr(void) {
-    mpu_callback();
-    clearPinInterrupt(MPU6050_INT);
-}
-
-void delayMs(uint16_t m) {
-    waitMicrosecond(m * 1000);
-}
