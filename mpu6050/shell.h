@@ -36,6 +36,7 @@
 #define SET_FG_G        "\x1b[32m"
 #define SET_FG_Y        "\x1b[33m"
 #define SET_FG_B        "\x1b[34m"
+#define SET_FG_GR       "\x1b[90m"
 
 #define SET_BG_BL       "\x1b[40m"
 #define SET_BG_W        "\x1b[107m"
@@ -43,6 +44,7 @@
 #define SET_BG_G        "\x1b[42m"
 #define SET_BG_Y        "\x1b[43m"
 #define SET_BG_B        "\x1b[44m"
+#define SET_BG_GR       "\x1b[100m"
 
 #define HIDE_CURSOR     "\x1B[?25l"
 #define SHOW_CURSOR     "\x1B[?25h"
@@ -56,7 +58,8 @@ typedef enum _color{
     Red,
     Green,
     Blue,
-    Yellow
+    Yellow,
+    Gray
 }Color;
 
 typedef struct _uartArgs

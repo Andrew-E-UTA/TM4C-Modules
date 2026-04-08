@@ -37,6 +37,7 @@ void _printArgs(const char str[], UartArgs uArgs)
         case Green: { putsUart0(SET_FG_G); }break;
         case Blue: { putsUart0(SET_FG_B); }break;
         case Yellow: { putsUart0(SET_FG_Y); }break;
+        case Gray: { putsUart0(SET_FG_GR); } break;
     }
 
     switch(uArgs.bg) {
@@ -46,6 +47,7 @@ void _printArgs(const char str[], UartArgs uArgs)
         case Green: { putsUart0(SET_BG_G); }break;
         case Blue: { putsUart0(SET_BG_B); }break;
         case Yellow: { putsUart0(SET_BG_Y); }break;
+        case Gray: { putsUart0(SET_BG_GR); } break;
     }
 
     putsUart0(str);

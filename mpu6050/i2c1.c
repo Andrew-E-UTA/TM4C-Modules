@@ -49,6 +49,7 @@ void initI2c1(void)
     // Configure I2C1 peripheral
     I2C1_MCR_R = 0;                                     // disable to program
     I2C1_MTPR_R = 19;                                   // (40MHz/2) / (6+4) / (19+1) = 100kbps
+                                                        // (80MHz/2) / (6+4) / (19+1) = 200kbps
     I2C1_MCR_R = I2C_MCR_MFE;                           // master
     I2C1_MCS_R = I2C_MCS_STOP;
 }

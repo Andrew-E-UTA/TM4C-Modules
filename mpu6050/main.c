@@ -65,11 +65,11 @@ int main(void) {
         m.g.z -= g_ofs.z;
 
         float dt_s = deltaSeconds();
-        putsUart0("---------------------Raws-----------------\n");
+        Print("---------------------Raws-----------------", .bg=Gray);
 
         printData(m);
 
-        putsUart0("-----------------Complimentary------------\n");
+        Print("-----------------Complimentary------------", .bg=Gray);
 
         begin = start();
         Vec3f c_att = complimentaryFilter(m, dt_s);
@@ -78,7 +78,7 @@ int main(void) {
         usprintf(buffer, "Time: %fus | Clocks: %d\n", seconds(end-begin)*1e6, end-begin);
         putsUart0(buffer);
 
-        putsUart0("-------------------Madgwick---------------\n");
+        Print("-------------------Madgwick---------------", .bg=Gray);
 
         begin = start();
         Vec3f m_att = madgwickFilter(m, dt_s);
@@ -183,15 +183,15 @@ Vec3f gyroOffsets(void) {
 
 void printData(MpuData m) {
     char buffer[100];
-    usprintf(buffer, "Ax:%10f|Ay:%10f|Az:%10f|       \n", m.a.x, m.a.y,m.a.z);
+    usprintf(buffer, "Ax:%10f|Ay:%10f|Az:%10f|\n", m.a.x, m.a.y,m.a.z);
     putsUart0(buffer);
-    usprintf(buffer, "Gx:%10f|Gy:%10f|Gz:%10f|       \n", m.g.x, m.g.y,m.g.z);
+    usprintf(buffer, "Gx:%10f|Gy:%10f|Gz:%10f|\n", m.g.x, m.g.y,m.g.z);
     putsUart0(buffer);
 }
 
 void printVec(Vec3f v) {
     char buffer[100];
-    usprintf(buffer, "X:%10f|Y:%10f|Z:%10f|          \n", v.x, v.y, v.z);
+    usprintf(buffer, "X:%10f|Y:%10f|Z:%10f   |\n", v.x, v.y, v.z);
     putsUart0(buffer);
 }
 
