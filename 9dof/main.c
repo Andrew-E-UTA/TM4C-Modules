@@ -167,6 +167,10 @@ void test_loop(Vec3f g_ofs) {
     Vec3f gyro  = (Vec3f){mpu.g.x - g_ofs.x, mpu.g.y - g_ofs.y, mpu.g.z - g_ofs.z};
     Vec3f mag   = qmc_read();
 
+    float t = mag.x;
+    mag.x = mag.y;
+    mag.y = -t;
+
     accel = correct(accel, accel_A, accel_b);
     mag = correct(mag, mag_A, mag_b);
 
@@ -174,8 +178,10 @@ void test_loop(Vec3f g_ofs) {
     gyro = sliding_window(window_g, gyro, WINDOW_SIZE, &idx_g);
     mag = sliding_window(window_m, mag, WINDOW_SIZE, &idx_m);
 
+    putsUart0(SAVE_POS);
     usprintf(buffer, "%f,%f,%f\n", mag.x, mag.y, mag.z);
     putsUart0(buffer);
+    putsUart0(RETURN_2_POS);
 }
 
 void filter_loop(Vec3f g_ofs) {
@@ -251,10 +257,13 @@ void marg_loop(Vec3f g_ofs) {
 
     MpuData mpu = mpu_read();
     Vec3f accel = (Vec3f){mpu.a.x, mpu.a.y, mpu.a.z};
-    Vec3f gyro  = (Vec3f){mpu.g.x - g_ofs.x, mpu.g.y - g_ofs.y, mpu.g.z - g_ofs.z};
+    Vec3f gyro  = (Vec3f){mpu.g.x - g_ofs.x, mpu.g.y - g_ofs.y, -(mpu.g.z - g_ofs.z)};
     Vec3f mag;
     if(data & QMC5883P_STAT_DRDY) {
         mag = qmc_read();
+        float t = mag.x;
+        mag.x = mag.y;
+        mag.y = -t;
         mag = correct(mag, mag_A, mag_b);
         mag = sliding_window(window_m, mag, WINDOW_SIZE, &idx_m);
     }
@@ -503,7 +512,7 @@ Vec3f MARG_AHRS_update(Quaternion *q_est, const Vec3f *a, const Vec3f *g, const 
 //6-DOF MADGWICK
 //============================================================
 
-#define M_BETA       0.02f
+#define M_BETA       0.01f
 #define RAD2DEG     57.2957795131
 #define DEG2RAD      0.0174532925
 Vec3f IMU_AHRS_update(Quaternion *q_est, const Vec3f *a, const Vec3f *g, float dt_s) {
