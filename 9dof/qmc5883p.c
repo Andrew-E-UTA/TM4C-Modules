@@ -30,7 +30,7 @@ void qmc_init(void) {
     writeI2c1Register(QMC5883P_ADDR, QMC5883P_SIGN_R, 0x06);
 
     writeI2c1Register(QMC5883P_ADDR, QMC5883P_CTRLB_R,
-                      QMC5883P_CTRLB_RNG_8GA);
+                      QMC5883P_CTRLB_RNG_12GA);
 
     writeI2c1Register(QMC5883P_ADDR, QMC5883P_CTRLA_R,
                       QMC5883P_CTRLA_MODE_CONTINUOUS |
@@ -48,17 +48,15 @@ void qmc_init(void) {
  * |   ± 8  G    |  3750  LSB/G    | *
  * |   ± 2  G    |  15000 LSB/G    | *
  * +-------------+-----------------+ */
-#define MAG_SENS    3750.0
-
+#define MAG_SENS    2500
 
 Vec3f qmc_read(void) {
     uint8_t bytes[6];
-    uint8_t i = 0;
     Vec3f raws;
     readI2c1Registers(QMC5883P_ADDR, QMC5883P_DOUT_XL_R, bytes, 6);
     float inv_sense = 1.0f / MAG_SENS;
-    raws.x = (float)((int16_t)((bytes[i++] << 8) | bytes[i++])) * inv_sense;
-    raws.y = (float)((int16_t)((bytes[i++] << 8) | bytes[i++])) * inv_sense;
-    raws.z = (float)((int16_t)((bytes[i++] << 8) | bytes[i++])) * inv_sense;
+    raws.x = (float)((int16_t)(bytes[1] << 8 | bytes[0])) * inv_sense;
+    raws.y = (float)((int16_t)(bytes[3] << 8 | bytes[2])) * inv_sense;
+    raws.z = (float)((int16_t)(bytes[5] << 8 | bytes[4])) * inv_sense;
     return raws;
 }
