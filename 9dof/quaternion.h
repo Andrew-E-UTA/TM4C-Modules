@@ -12,12 +12,13 @@
 
 typedef struct {float w, x, y, z; } Quaternion;
 
-inline Quaternion quaternion_hamilton(Quaternion q1, Quaternion q2);
-inline Quaternion quaternion_scalar(Quaternion q1, float scalar);
-inline Quaternion quaternion_add(Quaternion q1, Quaternion q2);
-inline Quaternion quaternion_sub(Quaternion q1, Quaternion q2);
-inline Quaternion quaternion_normalize(Quaternion q1);
-inline float      quaternion_q_norm(Quaternion q1);
-float             q_sqrt(float f);
+inline Quaternion q_mul(Quaternion q1, Quaternion q2);
+inline Quaternion q_scale(Quaternion q1, float scalar);
+inline Quaternion q_add(Quaternion q1, Quaternion q2);
+inline Quaternion q_sub(Quaternion q1, Quaternion q2);
+inline Quaternion q_norm(Quaternion q1);
+inline Quaternion q_star(Quaternion q1);
+inline float      q_mag(Quaternion q1);
+float             inv_sqrt(float f);
 
 #endif /* QUATERNION_H_ */

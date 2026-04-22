@@ -437,7 +437,7 @@ int usprintf(char *buffer, const char *format, ...) {
                 }
 
                 // Calculate total length
-                int total_len = int_len + 7; // +1 for decimal point, +6 for fractional
+                int total_len = int_len + 4; // +1 for decimal point, +6 for fractional
 
                 if (!left_align) {
                     int j;for (j = 0; j < width - total_len; j++) *buf_ptr++ = ' ';
@@ -451,7 +451,7 @@ int usprintf(char *buffer, const char *format, ...) {
                 // Print fractional part (6 digits)
                 *buf_ptr++ = '.';
                 uint32_t frac = frac_part;
-                for (j = 0; j < 6; j++) {
+                for (j = 0; j < 3; j++) {
                     int digit = frac / 100000;
                     *buf_ptr++ = '0' + digit;
                     frac = (frac % 100000) * 10;

@@ -32,75 +32,41 @@
 /* GLOBALS CONSTS AND MACROS */
 
 #define LED_G           PORTF,3
-#define MPU6050_INT     PORTB,0
+#define MPU6050_INT     PORTE,4
+#define QMC5883P_INT    PORTB,5
 
 
 /* SUB ROUTINE PROTOTYPES */
 
 void initHw(void);
-void printData(MpuData m, Vec3f mag);
+void printData(Vec3f a, Vec3f g, Vec3f m);
 void printVec(Vec3f v);
 float deltaSeconds(void);
 uint32_t start(void);
 uint32_t stop(void);
 float seconds(uint32_t counts);
-Vec3f complimentaryFilter(MpuData m, float dt_s);
-Vec3f madgwickFilter(MpuData m, Vec3f mag, float dt_s);
+Vec3f complimentaryFilter(Vec3f a, Vec3f g, float dt_s);
+Vec3f IMU_AHRS_update(Quaternion *q_est, const Vec3f *a, const Vec3f *g, float dt_s);
+Vec3f MARG_AHRS_update(Quaternion *q_est, const Vec3f *a, const Vec3f *g, const Vec3f *m, float dt_s);
 Vec3f gyroOffsets(void);
-//TODO: magOffsets (calculate hard-iron bias by capturing measurements in all positions:
-//  offset = 1/2(max + min)
+void filter_loop(Vec3f g_ofs);
+void test_loop(Vec3f g_ofs);
+void marg_loop(Vec3f g_ofs);
+Vec3f sliding_window(Vec3f window[], Vec3f new_data, uint8_t size, uint8_t *window_idx);
+
+#define WINDOW_SIZE 8
 
 /* MAIN ROUTINE */
 int main(void) {
     initHw();
     Vec3f g_ofs = gyroOffsets();
-    MpuData m;
-    Vec3f mag;
-
-    uint32_t begin, end;
-    char buffer[100];
-    int count = 100;
-
     for(;;) {
-        putsUart0(SAVE_POS);
 
-        m = mpu_read();
+//        filter_loop(g_ofs);
+//        test_loop(g_ofs);
+        marg_loop(g_ofs);
 
-        if(count++ >= 20) {
-            count = 0;
-            mag = qmc_read();
-        }
-
-        //Correct gyro
-        m.g.x -= g_ofs.x;
-        m.g.y -= g_ofs.y;
-        m.g.z -= g_ofs.z;
-
-        float dt_s = deltaSeconds();
-        Print("---------------------Raws-----------------", .bg=Gray);
-
-        printData(m, mag);
-
-        Print("-----------------Complimentary------------", .bg=Gray);
-
-        begin = start();
-        Vec3f c_att = complimentaryFilter(m, dt_s);
-        end = stop();
-        printVec(c_att);
-        usprintf(buffer, "Time: %fus | Clocks: %d\n", seconds(end-begin)*1e6, end-begin);
-        putsUart0(buffer);
-
-        Print("-------------------Madgwick---------------", .bg=Gray);
-
-        begin = start();
-        Vec3f m_att = madgwickFilter(m, mag, dt_s);
-        end = stop();
-        printVec(m_att);
-        usprintf(buffer, "Time: %fus | Clocks: %d\n", seconds(end-begin)*1e6, end-begin);
-        putsUart0(buffer);
-
-        putsUart0(RETURN_2_POS);
-        waitMicrosecond(1e3*2);
+        waitMicrosecond(40e3);
     }
 }
 
@@ -111,9 +77,13 @@ void initHw(void) {
     initSystemClockTo40Mhz();
     initSystemClockTo80Mhz();
 
-    //Status LED
+    //GPIO
     enablePort(PORTF);
+    enablePort(PORTE);
+    enablePort(PORTB);
     selectPinPushPullOutput(LED_G);
+    selectPinDigitalInput(QMC5883P_INT);
+    selectPinDigitalInput(MPU6050_INT);
 
     //Shell
     initUart0();
@@ -124,8 +94,8 @@ void initHw(void) {
     mpu_init();
     qmc_init();
 
-
     //Startup Sequence
+    putsUart0(CLEAR_COLOR);
     putsUart0(CLEAR_SCREEN);
     putsUart0(GOTO_HOME);
     putsUart0(HIDE_CURSOR);
@@ -148,13 +118,146 @@ void initHw(void) {
     WTIMER0_TBMR_R  = TIMER_TBMR_TBMR_1_SHOT | TIMER_TBMR_TBCDIR;
     WTIMER0_TBV_R   = 0;
     WTIMER0_CTL_R  |= TIMER_CTL_TBEN;
+}
 
-    //Interrupt Line
-//    enablePort(PORTB);
-//    selectPinDigitalInput(MPU6050_INT);
-//    selectPinInterruptHighLevel(MPU6050_INT);
-//    enablePinInterrupt(MPU6050_INT);
-//    enableNvicInterrupt(INT_GPIOB);
+Vec3f sliding_window(Vec3f window[], Vec3f new_data, uint8_t size, uint8_t *window_idx) {
+    window[((*window_idx)++) & (size-1)] = new_data;
+    uint8_t i;
+    Vec3f v = {};
+    for(i = 0; i < size; ++i) {
+        v.x += window[i].x;
+        v.y += window[i].y;
+        v.z += window[i].z;
+    }
+    v.x /= (float)size;
+    v.y /= (float)size;
+    v.z /= (float)size;
+    return v;
+}
+
+void test_loop(Vec3f g_ofs) {
+    static Vec3f window_a[WINDOW_SIZE] = {};
+    static Vec3f window_g[WINDOW_SIZE] = {};
+    static Vec3f window_m[WINDOW_SIZE] = {};
+    static uint8_t idx_a = 0, idx_g = 0, idx_m = 0;
+
+    char buffer[100];
+
+    MpuData mpu = mpu_read();
+    Vec3f accel = (Vec3f){mpu.a.x, mpu.a.y, mpu.a.z};
+    Vec3f gyro  = (Vec3f){mpu.g.x - g_ofs.x, mpu.g.y - g_ofs.y, mpu.g.z - g_ofs.z};
+    Vec3f mag   = qmc_read();
+
+    accel = sliding_window(window_a, accel, WINDOW_SIZE, &idx_a);
+    gyro = sliding_window(window_g, gyro, WINDOW_SIZE, &idx_g);
+    mag = sliding_window(window_m, mag, WINDOW_SIZE, &idx_m);
+
+    usprintf(buffer, "%f,%f,%f\n", mag.x, mag.y, mag.z);
+    putsUart0(buffer);
+}
+
+void filter_loop(Vec3f g_ofs) {
+    static Vec3f window_a[WINDOW_SIZE] = {};
+    static Vec3f window_g[WINDOW_SIZE] = {};
+    static Vec3f window_m[WINDOW_SIZE] = {};
+    static Quaternion imu_est = {1.0f, 0.0f, 0.0f, 0.0f};
+    static Quaternion marg_est = {1.0f, 0.0f, 0.0f, 0.0f};
+    static uint8_t idx_a = 0, idx_g = 0, idx_m = 0;
+
+    uint32_t begin, end;
+    char buffer[100];
+
+    putsUart0(SAVE_POS);
+    MpuData mpu = mpu_read();
+    Vec3f accel = (Vec3f){mpu.a.x, mpu.a.y, mpu.a.z};
+    Vec3f gyro  = (Vec3f){mpu.g.x - g_ofs.x, mpu.g.y - g_ofs.y, mpu.g.z - g_ofs.z};
+    Vec3f mag   = qmc_read();
+
+    accel = sliding_window(window_a, accel, WINDOW_SIZE, &idx_a);
+    gyro = sliding_window(window_g, gyro, WINDOW_SIZE, &idx_g);
+    mag = sliding_window(window_m, mag, WINDOW_SIZE, &idx_m);
+
+    float dt_s = deltaSeconds();
+    Print("---------------------Raws-----------------", .bg=Gray);
+    printData(accel, gyro, mag);
+    usprintf(buffer, "dt: %f\n", dt_s);
+    putsUart0(buffer);
+
+
+    Print("-----------------Complimentary------------", .bg=Gray);
+    begin = start();
+    Vec3f c_att = complimentaryFilter(accel, gyro, dt_s);
+    end = stop();
+    printVec(c_att);
+    usprintf(buffer, "Time: %fus | Clocks: %d\n", seconds(end-begin)*1e6, end-begin);
+    putsUart0(buffer);
+
+
+    Print("----------------Madgwick 6DoF-------------", .bg=Gray);
+    begin = start();
+    Vec3f m6_att = IMU_AHRS_update(&imu_est, &accel, &gyro, dt_s);
+    end = stop();
+    printVec(m6_att);
+    usprintf(buffer, "Time: %fus | Clocks: %d\n", seconds(end-begin)*1e6, end-begin);
+    putsUart0(buffer);
+
+
+    Print("----------------Madgwick 9DoF-------------", .bg=Gray);
+    begin = start();
+    Vec3f m9_att = MARG_AHRS_update(&marg_est, &accel, &gyro, &mag, dt_s);
+    end = stop();
+    printVec(m9_att);
+    usprintf(buffer, "Time: %fus | Clocks: %d\n", seconds(end-begin)*1e6, end-begin);
+    putsUart0(buffer);
+
+    putsUart0(RETURN_2_POS);
+}
+
+void marg_loop(Vec3f g_ofs) {
+    static Vec3f window_a[WINDOW_SIZE] = {};
+    static Vec3f window_g[WINDOW_SIZE] = {};
+    static Vec3f window_m[WINDOW_SIZE] = {};
+    static uint8_t idx_a = 0, idx_g = 0, idx_m = 0;
+    static float dt_marg_s = 0.0f;
+    static Quaternion q_est = {1.0f, 0.0f, 0.0f, 0.0f};
+
+    //Only update when mpu data is valid
+    if(!getPinValue(MPU6050_INT)) return;
+
+    char buffer[100];
+
+    float dt_s = deltaSeconds();
+    dt_marg_s += dt_s;
+    MpuData mpu = mpu_read();
+    Vec3f accel = (Vec3f){mpu.a.x, mpu.a.y, mpu.a.z};
+    Vec3f gyro  = (Vec3f){mpu.g.x - g_ofs.x, mpu.g.y - g_ofs.y, mpu.g.z - g_ofs.z};
+    Vec3f mag   = qmc_read();   //Could be 'stale'
+
+    accel   = sliding_window(window_a, accel, WINDOW_SIZE, &idx_a);
+    gyro    = sliding_window(window_g, gyro, WINDOW_SIZE, &idx_g);
+    mag     = sliding_window(window_m, mag, WINDOW_SIZE, &idx_m);
+
+    putsUart0(SAVE_POS);
+    Print("---------------------Raws-----------------", .bg=Gray);
+    printData(accel, gyro, mag);
+    usprintf(buffer, "dt: %f\n", dt_s);
+    putsUart0(buffer);
+
+    Vec3f euler;
+    //Run the Full 9DOF MARG AHRS Update
+    if(getPinValue(QMC5883P_INT)) {
+        euler = MARG_AHRS_update(&q_est, &accel, &gyro, &mag, dt_marg_s);
+        dt_marg_s = 0;
+    }
+    //Run the Partial 6DOF IMU AHRS Update
+    else {
+        euler = IMU_AHRS_update(&q_est, &accel, &gyro, dt_s);
+        //dt_s 'auto' zeros after function scope ends
+    }
+
+    Print("-------------------Attitude---------------", .bg=Gray);
+    printVec(euler);
+    putsUart0(RETURN_2_POS);
 }
 
 //#define COUNT2SEC .0000000250 //40MHz
@@ -188,7 +291,7 @@ Vec3f gyroOffsets(void) {
         s.x += m.g.x;
         s.y += m.g.y;
         s.z += m.g.z;
-        waitMicrosecond(1e3*2);
+        waitMicrosecond(2e3);
     }
     s.x /= 1000;
     s.y /= 1000;
@@ -196,34 +299,35 @@ Vec3f gyroOffsets(void) {
     return s;
 }
 
-void printData(MpuData m, Vec3f mag) {
+void printData(Vec3f a, Vec3f g, Vec3f m) {
     char buffer[100];
-    usprintf(buffer, "Ax:%10f|Ay:%10f|Az:%10f|\n", m.a.x, m.a.y,m.a.z);
+    usprintf(buffer, "Ax:%10f|Ay:%10f|Az:%10f|\n", a.x, a.y, a.z);
     putsUart0(buffer);
-    usprintf(buffer, "Gx:%10f|Gy:%10f|Gz:%10f|\n", m.g.x, m.g.y,m.g.z);
+    usprintf(buffer, "Gx:%10f|Gy:%10f|Gz:%10f|\n", g.x, g.y, g.z);
     putsUart0(buffer);
-    usprintf(buffer, "Mx:%10f|My:%10f|Mz:%10f|\n", mag.x, mag.y,mag.z);
+    usprintf(buffer, "Mx:%10f|My:%10f|Mz:%10f|\n", m.x, m.y, m.z);
     putsUart0(buffer);
 }
 
 void printVec(Vec3f v) {
     char buffer[100];
     usprintf(buffer, "X:%10f|Y:%10f|Z:%10f   |\n", v.x, v.y, v.z);
+//    putsUart0(CLEAR_LINE);
     putsUart0(buffer);
 }
 
 #define C_ALPHA   0.95
-Vec3f complimentaryFilter(MpuData m, float dt_s) {
+Vec3f complimentaryFilter(Vec3f a, Vec3f g, float dt_s) {
     static Vec3f gyro_est = {0, 0, 0};
     Vec3f accel_est = {0 ,0, 0};
     //integrate Gyro
-    gyro_est.x += m.g.x * dt_s;
-    gyro_est.y += m.g.y * dt_s;
-    gyro_est.z += m.g.z * dt_s;
+    gyro_est.x += g.x * dt_s;
+    gyro_est.y += g.y * dt_s;
+    gyro_est.z += g.z * dt_s;
     //Euler Angle from Accel
-    accel_est.x = atan2f(m.a.y, sqrtf(m.a.x*m.a.x + m.a.z*m.a.z));
-    accel_est.y = atan2f(m.a.x, sqrtf(m.a.y*m.a.y + m.a.z*m.a.z));
-    accel_est.z = atan2f(sqrtf(m.a.x*m.a.x + m.a.y*m.a.y), m.a.z);
+    accel_est.x = atan2f(a.y, sqrtf(a.x*a.x + a.z*a.z));
+    accel_est.y = atan2f(a.x, sqrtf(a.y*a.y + a.z*a.z));
+    accel_est.z = atan2f(sqrtf(a.x*a.x + a.y*a.y), a.z);
     return (Vec3f){
         .x= (C_ALPHA)*gyro_est.x + (1-C_ALPHA)*accel_est.x,
         .y= (C_ALPHA)*gyro_est.y + (1-C_ALPHA)*accel_est.y,
@@ -231,93 +335,197 @@ Vec3f complimentaryFilter(MpuData m, float dt_s) {
     };
 }
 
-#define BETA_MADGWICK   1.5f
-#define RAD2DEG         57.2957795131f
-#define DEG2RAD         0.0174532925f
+#define M_BETA   1.5f
+#define RAD2DEG  57.2957795131f
+#define DEG2RAD  0.0174532925f
 
-Vec3f madgwickFilter(MpuData mpu, Vec3f mag, float dt_s) {
-//    static Quaternion q_est = {1.0f, 0.0f, 0.0f, 0.0f};   // w, x, y, z
-//    Quaternion q_prev = q_est;
-//
+//============================================================
+//9-DOF MADGWICK
+//============================================================
+void MadgwickQuaternionUpdate(float q[4], float ax, float ay, float az, float gx, float gy, float gz, float mx, float my, float mz, float deltat);
+
+Vec3f MARG_AHRS_update(Quaternion *q_est, const Vec3f *a, const Vec3f *g, const Vec3f *m, float dt_s) {
+    float q[4];
+    q[0] = q_est->w;
+    q[1] = q_est->x;
+    q[2] = q_est->y;
+    q[3] = q_est->z;
+
+    float ax = a->x, ay = a->y, az = a->z,
+          gx = g->x, gy = g->y, gz = g->z,
+          mx = m->x, my = m->y, mz = m->z;
+    MadgwickQuaternionUpdate(q, ax, ay, az, gx, gy, gz, mx, my, mz, dt_s);
+    q_est->w = q[0];
+    q_est->x = q[1];
+    q_est->y = q[2];
+    q_est->z = q[3];
+    float r11 = 1 - 2*(q_est->y*q_est->y + q_est->z*q_est->z);
+    float r21 = 2*(q_est->x*q_est->y - q_est->w*q_est->z);
+    float r31 = 2*(q_est->x*q_est->z + q_est->w*q_est->y);
+    float r32 = 2*(q_est->y*q_est->z - q_est->w*q_est->x);
+    float r33 = 1 - 2*(q_est->x*q_est->x + q_est->y*q_est->y);
+
+    return (Vec3f) {
+        RAD2DEG * atan2f(r32, r33),
+        RAD2DEG * asinf(-r31),
+        RAD2DEG * atan2f(r21, r11)
+    };
+
+//    // My SLOW version for understanding:
+
 //    // Sensor data
-//    Quaternion a = {1, mpu.a.x, mpu.a.y, mpu.a.z};
-//    Quaternion g = {1, mpu.g.x * DEG2RAD, mpu.g.y * DEG2RAD, mpu.g.z * DEG2RAD};
-//    Quaternion m = {1, mag.x, mag.y, mag.z};
+//    Quaternion qa = {0, a.x, a.y, a.z};
+//    Quaternion qw = {0, g.x, g.y, g.z};
+//    Quaternion qm = {0, m.x, m.y, m.z};
 //
-//    // Normalise Accel and Mag Sensor Data
-//    a = quaternion_normalize(a);
-//    m = quaternion_normalize(m);
+//    // Normalise Accel and Mag Sensor Data, convert Gyro Data
+//    qa = q_norm(qa);
+//    qm = q_norm(qm);
+//    qw = q_scale(qw, DEG2RAD);
 //
-//    // Auxiliary products (direct access to q_prev components)
-//    float q1 = q_prev.w, q2 = q_prev.x, q3 = q_prev.y, q4 = q_prev.z;
-//    float _2q1 = 2.0f * q1, _2q2 = 2.0f * q2, _2q3 = 2.0f * q3, _2q4 = 2.0f * q4;
-//    float _2q1q3 = 2.0f * q1 * q3;
-//    float _2q3q4 = 2.0f * q3 * q4;
-//    float q1q1 = q1*q1, q1q2 = q1*q2, q1q3 = q1*q3, q1q4 = q1*q4;
-//    float q2q2 = q2*q2, q2q3 = q2*q3, q2q4 = q2*q4;
-//    float q3q3 = q3*q3, q3q4 = q3*q4, q4q4 = q4*q4;
-//
-//    // Reference direction of Earth's magnetic field
-//    float _2q1mx = 2.0f * q1 * m.x;
-//    float _2q1my = 2.0f * q1 * m.y;
-//    float _2q1mz = 2.0f * q1 * m.z;
-//    float _2q2mx = 2.0f * q2 * m.x;
-//    float hx = m.x*q1q1 - _2q1my*q4 + _2q1mz*q3 + m.x*q2q2 + _2q2*m.y*q3 + _2q2*m.z*q4 - m.x*q3q3 - m.x*q4q4;
-//    float hy = _2q1mx*q4 + m.y*q1q1 - _2q1mz*q2 + _2q2mx*q3 - m.y*q2q2 + m.y*q3q3 + _2q3*m.z*q4 - m.y*q4q4;
-//    float _2bx = sqrtf(hx*hx + hy*hy);
-//    float _2bz = -_2q1mx*q3 + _2q1my*q2 + m.z*q1q1 + _2q2mx*q4 - m.z*q2q2 + _2q3*m.y*q4 - m.z*q3q3 + m.z*q4q4;
-//    float _4bx = 2.0f * _2bx;
-//    float _4bz = 2.0f * _2bz;
-//
-//    // Gradient of the objective function (s1..s4)
-//    Quaternion grad = {
-//                    -_2q3 * (2.0f*q2q4 - _2q1q3 - a.x)
-//                    + _2q2 * (2.0f*q1q2 + _2q3q4 - a.y)
-//                    - _2bz*q3 * (_2bx*(0.5f - q3q3 - q4q4) + _2bz*(q2q4 - q1q3) - m.x)
-//                    + (-_2bx*q4 + _2bz*q2) * (_2bx*(q2q3 - q1q4) + _2bz*(q1q2 + q3q4) - m.y)
-//                    + _2bx*q3 * (_2bx*(q1q3 + q2q4) + _2bz*(0.5f - q2q2 - q3q3) - m.z),
-//
-//                    _2q4 * (2.0f*q2q4 - _2q1q3 - a.x)
-//                    + _2q1 * (2.0f*q1q2 + _2q3q4 - a.y)
-//                    - 4.0f*q2 * (1.0f - 2.0f*q2q2 - 2.0f*q3q3 - a.z)
-//                    + _2bz*q4 * (_2bx*(0.5f - q3q3 - q4q4) + _2bz*(q2q4 - q1q3) - m.x)
-//                    + (_2bx*q3 + _2bz*q1) * (_2bx*(q2q3 - q1q4) + _2bz*(q1q2 + q3q4) - m.y)
-//                    + (_2bx*q4 - _4bz*q2) * (_2bx*(q1q3 + q2q4) + _2bz*(0.5f - q2q2 - q3q3) - m.z),
-//
-//                    -_2q1 * (2.0f*q2q4 - _2q1q3 - a.x)
-//                    + _2q4 * (2.0f*q1q2 + _2q3q4 - a.y)
-//                    - 4.0f*q3 * (1.0f - 2.0f*q2q2 - 2.0f*q3q3 - a.z)
-//                    + (-_4bx*q3 - _2bz*q1) * (_2bx*(0.5f - q3q3 - q4q4) + _2bz*(q2q4 - q1q3) - m.x)
-//                    + (_2bx*q2 + _2bz*q4) * (_2bx*(q2q3 - q1q4) + _2bz*(q1q2 + q3q4) - m.y)
-//                    + (_2bx*q1 - _4bz*q3) * (_2bx*(q1q3 + q2q4) + _2bz*(0.5f - q2q2 - q3q3) - m.z),
-//
-//                    _2q2 * (2.0f*q2q4 - _2q1q3 - a.x)
-//                    + _2q3 * (2.0f*q1q2 + _2q3q4 - a.y)
-//                    + (-_4bx*q4 + _2bz*q2) * (_2bx*(0.5f - q3q3 - q4q4) + _2bz*(q2q4 - q1q3) - m.x)
-//                    + (-_2bx*q1 + _2bz*q3) * (_2bx*(q2q3 - q1q4) + _2bz*(q1q2 + q3q4) - m.y)
-//                    + _2bx*q2 * (_2bx*(q1q3 + q2q4) + _2bz*(0.5f - q2q2 - q3q3) - m.z)
+//    // Rotate Mag Reading from body frame to world frame
+//    Quaternion h = q_mul(qp, q_mul(qm, q_star(qp)));
+//    Quaternion b = (Quaternion) {
+//        .w=0.0f,
+//        .x=sqrtf(h.x*h.x + h.y*h.y),
+//        .y=0.0f,
+//        .z=h.z
 //    };
 //
-//    grad = quaternion_normalize(grad);
+//    //Form Objective functions for g and b with respective jacobians
+//    // J_g,b^T = [ J_g^T | J_b^T]
+//    // F_g,b   = [F_g | F_b ]^T (transpose cus i have to write as row vector but F is actually column vector
+//    float F_g[3] = {
+//        2*(qp.x*qp.z - qp.w*qp.y) - qa.x,
+//        2*(qp.w*qp.x + qp.y*qp.z) - qa.y,
+//        2*(0.5 - qp.x*qp.x - qp.y*qp.y) - qa.z
+//    };
 //
-//    Quaternion omega = {0.0f, g.x, g.y, g.z};
+//    float J_g[3][4] = {
+//       {-2*qp.y, 2*qp.z, -2*qp.w, 2*qp.x},
+//       {2*qp.x, 2*qp.w, 2*qp.z, 2*qp.y},
+//       {0, -4*qp.x, -4*qp.y, 0},
+//    };
 //
-//    // qDot = 0.5 * q * omega - beta * grad
-//    Quaternion qDot = quaternion_sub(
-//        quaternion_scalar(quaternion_hamilton(q_prev, omega), 0.5f),
-//        quaternion_scalar(grad, BETA_MADGWICK)
-//    );
+//    float F_b[3] = {
+//        2*b.x*(0.5 - qp.y*qp.y  - qp.z*qp.z) + 2*b.z*(      qp.x*qp.z - qp.w*qp.y) - qm.x,
+//        2*b.x*(      qp.x*qp.y  - qp.w*qp.z) + 2*b.z*(      qp.w*qp.x + qp.y*qp.z) - qm.y,
+//        2*b.x*(      qp.w*qp.y  + qp.x*qp.z) + 2*b.z*(0.5 - qp.x*qp.x - qp.y*qp.y) - qm.z
+//    };
 //
-//    // Integrate and normalise
-//    Quaternion q_new = quaternion_add(q_prev, quaternion_scalar(qDot, dt_s));
-//    q_est = quaternion_normalize(q_new);
+//    float J_b[3][4] = {
+//       {-2*b.z*qp.y, 2*b.z*qp.z, -4*b.x*qp.y - 2*b.z*qp.w, -4*b.x*qp.z + 2*b.z*qp.x},
+//       {-2*b.x*qp.z + 2*b.z*qp.x, 2*b.x*qp.y + 2*b.z*qp.w, 2*b.x*qp.x + 2*b.z*qp.z, -2*b.x*qp.w + 2*b.z*qp.y},
+//       {2*b.x*qp.y, 2*b.x*qp.z - 4*b.z*qp.x, 2*b.x*qp.w - 4*b.z*qp.y, 2*b.x*qp.x},
+//    };
+//
+//    // qga = J_g^T * F_g
+//    Quaternion qga;
+//    qga.w = J_g[0][0]*F_g[0] + J_g[1][0]*F_g[1] + J_g[2][0]*F_g[2];
+//    qga.x = J_g[0][1]*F_g[0] + J_g[1][1]*F_g[1] + J_g[2][1]*F_g[2];
+//    qga.y = J_g[0][2]*F_g[0] + J_g[1][2]*F_g[1] + J_g[2][2]*F_g[2];
+//    qga.z = J_g[0][3]*F_g[0] + J_g[1][3]*F_g[1] + J_g[2][3]*F_g[2];
+//
+//    // qgb = J_b^T * F_b
+//    Quaternion qgb;
+//    qgb.w = J_b[0][0]*F_b[0] + J_b[1][0]*F_b[1] + J_b[2][0]*F_b[2];
+//    qgb.x = J_b[0][1]*F_b[0] + J_b[1][1]*F_b[1] + J_b[2][1]*F_b[2];
+//    qgb.y = J_b[0][2]*F_b[0] + J_b[1][2]*F_b[1] + J_b[2][2]*F_b[2];
+//    qgb.z = J_b[0][3]*F_b[0] + J_b[1][3]*F_b[1] + J_b[2][3]*F_b[2];
+//
+//    //Gradiante (J_g,b^T * F_g,b) equates to J_g^T * F_g + J_b^T * F_b
+//    Quaternion qg = q_add(qga, qgb);
+//
+//    // normalise step magnitude
+//    qg = q_scale(q_norm(qg), M_BETA);
+//
+//    //compute q_dot
+//    Quaternion qd = q_sub(q_mul(q_scale(qp, 0.5), qw), qg);
+//
+//    //Integrate and normalize to get q_est
+//    q_est = q_norm(q_add(q_est, q_scale(qd, dt_s)));
+//
+//    // Form Rotation Matrix
+//    float r11 = 1 - 2*(q_est.y*q_est.y + q_est.z*q_est.z);
+//    float r21 = 2*(q_est.x*q_est.y - q_est.w*q_est.z);
+//    float r31 = 2*(q_est.x*q_est.z + q_est.w*q_est.y);
+//    float r32 = 2*(q_est.y*q_est.z - q_est.w*q_est.x);
+//    float r33 = 1 - 2*(q_est.x*q_est.x + q_est.y*q_est.y);
+//
+//    // Return as Euler Angles
+//    return (Vec3f) {
+//        RAD2DEG * atan2f(r32, r33),
+//        RAD2DEG * asinf(-r31),
+//        RAD2DEG * atan2f(r21, r11)
+//    };
+}
+#undef M_BETA
+#undef RAD2DEG
+#undef DEG2RAD
 
-//    static Quaternion q = {1.0f, 0.0f, 0.0f, 0.0f};
-    static float q[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-    float ax = mpu.a.x, ay = mpu.a.y, az = mpu.a.z;
-    float gx = mpu.g.x, gy = mpu.g.y, gz = mpu.g.z;
-    float mx = mag.x, my = mag.y, mz = mag.z;
+//============================================================
+//6-DOF MADGWICK
+//============================================================
 
+#define M_BETA       0.8f
+#define RAD2DEG     57.2957795131
+#define DEG2RAD      0.0174532925
+Vec3f IMU_AHRS_update(Quaternion *q_est, const Vec3f *a, const Vec3f *g, float dt_s) {
+    Quaternion q_prev = *q_est;
+
+    //Estimate
+    Quaternion q_accel = {0, a->x, a->y, a->z};
+    q_accel = q_norm(q_accel);
+    Quaternion q_gyro = {0, g->x*.5, g->y*.5, g->z*.5};
+    q_gyro = q_scale(q_gyro, DEG2RAD);
+    q_gyro = q_mul(q_prev, q_gyro);
+
+    //Objective Function
+    float f[3] = {
+          2*(q_prev.x*q_prev.z - q_prev.w*q_prev.y) - q_accel.x,
+          2*(q_prev.w*q_prev.x + q_prev.y*q_prev.z) - q_accel.y,
+          2*(0.5 - q_prev.x*q_prev.x - q_prev.y*q_prev.y) - q_accel.z,
+    };
+
+    float j[3][4] =  {
+          {-2 * q_prev.y, 2 * q_prev.z, -2 * q_prev.w, 2 * q_prev.x},
+          {2 * q_prev.x, 2 * q_prev.w, 2 * q_prev.z, 2 * q_prev.y},
+          {0, -4 * q_prev.x, -4 * q_prev.y, 0},
+    };
+
+    //Gradiant (J' * F)
+    Quaternion q_grad = {
+         j[0][0]*f[0] + j[1][0]*f[1] + j[2][0]*f[2],
+         j[0][1]*f[0] + j[1][1]*f[1] + j[2][1]*f[2],
+         j[0][2]*f[0] + j[1][2]*f[1] + j[2][2]*f[2],
+         j[0][3]*f[0] + j[1][3]*f[1] + j[2][3]*f[2]
+    };
+    q_grad = q_norm(q_grad);
+    q_grad = q_scale(q_grad, M_BETA);
+    *q_est = q_add(q_prev, q_scale(q_sub(q_gyro, q_grad), dt_s));
+
+    // Rotation matrix (body to world, assuming ZYX order)
+    float r11 = 1 - 2*(q_est->y*q_est->y + q_est->z*q_est->z);
+    float r21 = 2*(q_est->x*q_est->y - q_est->w*q_est->z);
+    float r31 = 2*(q_est->x*q_est->z + q_est->w*q_est->y);
+    float r32 = 2*(q_est->y*q_est->z - q_est->w*q_est->x);
+    float r33 = 1 - 2*(q_est->x*q_est->x + q_est->y*q_est->y);
+
+    return (Vec3f) {
+        RAD2DEG * atan2f(r32, r33),
+        RAD2DEG * asinf(-r31),
+        RAD2DEG * atan2f(r21, r11)
+    };
+}
+
+//============================================================================
+//============================================================================
+// Using for speed
+//============================================================================
+//============================================================================
+
+void MadgwickQuaternionUpdate(float q[4], float ax, float ay, float az, float gx, float gy, float gz, float mx, float my, float mz, float deltat)
+{
     float beta = 1.5;
     float q1 = q[0], q2 = q[1], q3 = q[2], q4 = q[3];   // short name local variable for readability
     float norm;
@@ -392,10 +600,10 @@ Vec3f madgwickFilter(MpuData mpu, Vec3f mag, float dt_s) {
     qDot4 = 0.5f * (q1 * gz + q2 * gy - q3 * gx) - beta * s4;
 
     // Integrate to yield quaternion
-    q1 += qDot1 * dt_s;
-    q2 += qDot2 * dt_s;
-    q3 += qDot3 * dt_s;
-    q4 += qDot4 * dt_s;
+    q1 += qDot1 * deltat;
+    q2 += qDot2 * deltat;
+    q3 += qDot3 * deltat;
+    q4 += qDot4 * deltat;
     norm = sqrtf(q1 * q1 + q2 * q2 + q3 * q3 + q4 * q4);    // normalise quaternion
     norm = 1.0f/norm;
     q[0] = q1 * norm;
@@ -403,18 +611,4 @@ Vec3f madgwickFilter(MpuData mpu, Vec3f mag, float dt_s) {
     q[2] = q3 * norm;
     q[3] = q4 * norm;
 
-    Quaternion q_est = {q[0], q[1], q[2], q[3]};
-
-    // Compute Euler angles (ZYX order)
-    float r11 = 1 - 2*(q_est.y*q_est.y + q_est.z*q_est.z);
-    float r21 = 2*(q_est.x*q_est.y - q_est.w*q_est.z);
-    float r31 = 2*(q_est.x*q_est.z + q_est.w*q_est.y);
-    float r32 = 2*(q_est.y*q_est.z - q_est.w*q_est.x);
-    float r33 = 1 - 2*(q_est.x*q_est.x + q_est.y*q_est.y);
-
-    return (Vec3f) {
-        RAD2DEG * atan2f(r32, r33 + 1e-12f),
-        RAD2DEG * asinf(-r31),
-        RAD2DEG * atan2f(r21, r11)
-    };
 }
